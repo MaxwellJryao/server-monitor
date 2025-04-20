@@ -276,7 +276,10 @@
     </div>
 
     <script>
-        // 图表配置和数据存储
+        // 全局变量声明
+        let selectedCells = new Set();
+        let reservations = new Map(); // 存储预约信息：Map<gpuId, Set<timeSlotId>>
+        let expandedGpus = new Set(); // 存储展开的GPU UUID
         const maxDataPoints = 20;
         const charts = {};
         const data = {
@@ -377,10 +380,6 @@
         // 更新GPU信息
         function updateGpuInfo(gpus) {
             const tbody = document.getElementById('gpuTableBody');
-            // 保存当前展开的GPU行的ID
-            const expandedGpuIds = Array.from(document.querySelectorAll('.gpu-details.show'))
-                .map(row => row.previousElementSibling.querySelector('td').textContent);
-            
             tbody.innerHTML = '';
 
             if (!gpus || gpus.length === 0) {
@@ -392,7 +391,7 @@
                 const row = document.createElement('tr');
                 row.className = 'gpu-row';
                 row.innerHTML = `
-                    <td>${gpu.id}</td>
+                    <td>GPU ${gpu.id}</td>
                     <td>${gpu.fan_speed}%</td>
                     <td>${gpu.temperature}°C</td>
                     <td>${gpu.power_usage.toFixed(0)}W / ${gpu.power_limit.toFixed(0)}W</td>
@@ -403,8 +402,8 @@
 
                 const detailsRow = document.createElement('tr');
                 detailsRow.className = 'gpu-details';
-                // 如果这个GPU之前是展开的，保持展开状态
-                if (expandedGpuIds.includes(gpu.id.toString())) {
+                // 检查是否应该展开
+                if (expandedGpus.has(gpu.uuid)) {
                     detailsRow.classList.add('show');
                 }
                 
@@ -430,6 +429,7 @@
                             <span class="gpu-stat">功率: ${gpu.power_usage.toFixed(1)}W / ${gpu.power_limit.toFixed(1)}W</span>
                             <span class="gpu-stat">风扇: ${gpu.fan_speed}%</span>
                             <span class="gpu-stat">内存: ${formatMemory(gpu.memoryUsed)} / ${formatMemory(gpu.memoryTotal)}</span>
+                            <span class="gpu-stat">uuid: ${gpu.uuid}</span>
                         </div>
                         <table class="gpu-process-table">
                             <thead>
@@ -453,25 +453,19 @@
                 // 双击事件处理
                 row.addEventListener('dblclick', (e) => {
                     e.preventDefault();
-                    // 获取当前行的详情元素
                     const details = row.nextElementSibling;
                     
-                    // 如果当前详情已经显示，则只隐藏当前详情
                     if (details.classList.contains('show')) {
+                        // 如果已经展开，则收起并从集合中移除
                         details.classList.remove('show');
-                        return;
+                        expandedGpus.delete(gpu.uuid);
+                    } else {
+                        // 如果未展开，则展开并添加到集合中
+                        details.classList.add('show');
+                        expandedGpus.add(gpu.uuid);
                     }
-                    
-                    // 隐藏所有其他GPU的详情
-                    document.querySelectorAll('.gpu-details').forEach(detail => {
-                        detail.classList.remove('show');
-                    });
-                    
-                    // 显示当前GPU的详情
-                    details.classList.add('show');
                 });
 
-                // 添加鼠标悬停提示
                 row.title = '双击查看详细信息';
             });
         }
@@ -506,9 +500,6 @@
         updateSystemInfo(); // 立即执行一次
 
         // GPU预约相关代码
-        let selectedCells = new Set();
-        let reservations = new Map(); // 存储预约信息：Map<gpuId, Set<timeSlotId>>
-
         // 初始化预约表格
         function initReservationTable() {
             const tbody = document.querySelector('#reservationTable tbody');
@@ -550,8 +541,10 @@
             
             gpus.forEach(gpu => {
                 const option = document.createElement('option');
-                option.value = gpu.id;
-                option.textContent = `GPU ${gpu.id}: ${gpu.name}`;
+                option.value = gpu.uuid;  // 使用UUID作为value
+                // 显示简短的UUID（前8位）和GPU名称
+                // const shortUuid = gpu.uuid.split('-')[0];
+                option.textContent = `GPU ${gpu.id}`;
                 select.appendChild(option);
             });
             

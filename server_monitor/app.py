@@ -47,7 +47,8 @@ def get_system_info(verbose=False):
                 # 获取GPU基本信息，确保所有值都是基本类型
                 gpu_info = {
                     'id': int(device.index),
-                    'name': str(device.name),  # 注意这里不需要()
+                    'uuid': str(device.uuid()),  # 添加UUID
+                    'name': str(device.name()),
                     'load': float(device.gpu_utilization() or 0),
                     'memoryTotal': int(device.memory_total() or 0),
                     'memoryUsed': int(device.memory_used() or 0),
