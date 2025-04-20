@@ -139,14 +139,29 @@
             border-radius: 4px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
+        .admin-badge {
+            background-color: #ff4081;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            margin-left: 8px;
+        }
+        .reserved[data-user-id]:not([data-user-id="{{ current_user.id }}"]) {
+            opacity: 0.7;
+        }
     </style>
 </head>
-<body data-user-id="{{ current_user.id }}">
+<body data-user-id="{{ current_user.id }}" data-is-admin="{{ current_user.is_admin|lower }}">
     <div class="container-fluid py-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <h1 class="text-center mb-0">GPU预约系统</h1>
             <div class="d-flex align-items-center">
-                <span class="me-3">欢迎，{{ current_user.username }}</span>
+                <span class="me-3">欢迎，{{ current_user.username }}
+                {% if current_user.is_admin %}
+                    <span class="admin-badge">管理员</span>
+                {% endif %}
+                </span>
                 <a href="{{ url_for('index') }}" class="btn btn-outline-primary me-2">返回监控</a>
                 <a href="{{ url_for('logout') }}" class="btn btn-outline-danger">登出</a>
             </div>
@@ -176,6 +191,12 @@
                         <div class="legend-color" style="background-color: #d32f2f; outline: 2px solid #ffeb3b;"></div>
                         <span>选中待取消</span>
                     </div>
+                    {% if current_user.is_admin %}
+                    <div class="legend-item">
+                        <div class="legend-color" style="background-color: #ff5252; opacity: 0.7;"></div>
+                        <span>其他用户预约（管理员可取消）</span>
+                    </div>
+                    {% endif %}
                 </div>
                 <div id="tooltip" class="tooltip"></div>
                 <div class="reservation-container">
@@ -197,6 +218,9 @@
         let selectedCells = new Map(); // 存储预约信息：Map<timeSlotId_gpuId, {gpuId, timeSlotId}>
         let reservations = new Map(); // 存储预约信息：Map<gpuId, Map<timeSlotId, reservationInfo>>
         let selectedForCancel = new Map(); // 存储待取消的预约：Map<timeSlotId_gpuId, {gpuId, timeSlotId}>
+
+        // 获取当前用户是否是管理员
+        const isAdmin = document.body.dataset.isAdmin === 'true';
 
         // 加载预约信息
         async function loadReservations() {
@@ -295,7 +319,8 @@
             
             // 处理已预约时段的选择
             if (cell.classList.contains('reserved')) {
-                if (!cell.classList.contains('my-reservation')) {
+                // 如果是管理员或者是自己的预约，允许取消
+                if (!cell.classList.contains('my-reservation') && !isAdmin) {
                     alert('您无法取消其他用户的预约');
                     return;
                 }
