@@ -203,13 +203,42 @@
             z-index: 1000;
             display: none;
         }
+        .my-reservation {
+            cursor: pointer;
+            position: relative;
+        }
+        .my-reservation:after {
+            content: '×';
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            font-size: 12px;
+            color: white;
+            opacity: 0.7;
+        }
+        .my-reservation:hover:after {
+            opacity: 1;
+        }
+        .reservation-cell {
+            cursor: pointer !important;
+        }
+        .reservation-cell[title] {
+            cursor: pointer !important;
+        }
     </style>
 </head>
-<body>
+<body data-user-id="{{ current_user.id }}">
     <div class="container-fluid py-4">
-        <h1 class="text-center mb-4">服务器硬件监控系统</h1>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="text-center mb-0">服务器硬件监控系统</h1>
+            <div class="d-flex align-items-center">
+                <span class="me-3">欢迎，{{ current_user.username }}</span>
+                <a href="{{ url_for('gpu_reservation') }}" class="btn btn-outline-primary me-2">GPU预约</a>
+                <a href="{{ url_for('logout') }}" class="btn btn-outline-danger">登出</a>
+            </div>
+        </div>
         <div class="row">
-            <!-- CPU使用率 -->
+            <!-- CPU使用率和内存使用率 -->
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-body">
@@ -217,10 +246,13 @@
                         <div class="chart-container">
                             <canvas id="cpuChart"></canvas>
                         </div>
+                        <div class="mt-2 small">
+                            <div>CPU核心数：<span id="cpuCount"></span></div>
+                            <div>CPU频率：<span id="cpuFreq"></span> MHz</div>
+                        </div>
                     </div>
                 </div>
             </div>
-            <!-- 内存使用率 -->
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-body">
@@ -228,11 +260,41 @@
                         <div class="chart-container">
                             <canvas id="memoryChart"></canvas>
                         </div>
+                        <div class="mt-2 small">
+                            <div>总内存：<span id="memoryTotal"></span></div>
+                            <div>已使用：<span id="memoryUsed"></span></div>
+                            <div>可用内存：<span id="memoryAvailable"></span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- 硬盘使用情况 -->
+            <div class="col-12 mt-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">硬盘使用情况</h5>
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="diskTable">
+                                <thead>
+                                    <tr>
+                                        <th>挂载点</th>
+                                        <th>设备</th>
+                                        <th>文件系统</th>
+                                        <th>总容量</th>
+                                        <th>已使用</th>
+                                        <th>可用空间</th>
+                                        <th>使用率</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="diskTableBody">
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
             <!-- GPU监控 -->
-            <div class="col-12">
+            <div class="col-12 mt-4">
                 <div class="card">
                     <div class="card-body">
                         <h5 class="card-title">GPU监控</h5>
@@ -255,58 +317,11 @@
                     </div>
                 </div>
             </div>
-            <!-- GPU预约 -->
-            <div class="col-12">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">GPU预约</h5>
-                        <div class="reservation-controls">
-                            <select id="gpuSelect" class="form-select" style="width: auto;">
-                                <option value="">选择GPU</option>
-                            </select>
-                            <button id="reserveBtn" class="btn btn-primary" disabled>预约所选时段</button>
-                            <button id="clearSelectionBtn" class="btn btn-secondary">清除选择</button>
-                            <button id="cancelReservationBtn" class="btn btn-danger" disabled>取消选中的预约</button>
-                        </div>
-                        <div class="reservation-legend">
-                            <div class="legend-item">
-                                <div class="legend-color" style="background-color: #e3f2fd;"></div>
-                                <span>可选择</span>
-                            </div>
-                            <div class="legend-item">
-                                <div class="legend-color" style="background-color: #2196f3;"></div>
-                                <span>已选择</span>
-                            </div>
-                            <div class="legend-item">
-                                <div class="legend-color" style="background-color: #ff5252;"></div>
-                                <span>已预约</span>
-                            </div>
-                            <div class="legend-item">
-                                <div class="legend-color" style="background-color: #d32f2f; outline: 2px solid #ffeb3b;"></div>
-                                <span>选中待取消</span>
-                            </div>
-                        </div>
-                        <div id="tooltip" class="tooltip"></div>
-                        <div class="reservation-container">
-                            <table class="reservation-table" id="reservationTable">
-                                <thead>
-                                    <tr>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 
     <script>
         // 全局变量声明
-        let selectedCells = new Set();
-        let reservations = new Map(); // 存储预约信息：Map<gpuId, Set<timeSlotId>>
         let expandedGpus = new Set(); // 存储展开的GPU UUID
         const maxDataPoints = 20;
         const charts = {};
@@ -314,9 +329,6 @@
             cpu: { labels: [], values: [] },
             memory: { labels: [], values: [] }
         };
-
-        // 添加用于存储待取消预约的集合
-        let selectedForCancel = new Set();
 
         // 创建图表
         function createChart(canvasId, label, color) {
@@ -341,6 +353,9 @@
                             beginAtZero: true,
                             max: 100
                         }
+                    },
+                    animation: {
+                        duration: 0
                     }
                 }
             });
@@ -360,10 +375,10 @@
                 chart.data.datasets[0].data.shift();
             }
 
-            chart.update();
+            chart.update('none'); // 使用 'none' 模式更新以提高性能
         }
 
-        // 格式化内存大小，自动选择合适的单位
+        // 格式化内存大小
         function formatMemory(bytes) {
             const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
             let size = bytes;
@@ -377,35 +392,61 @@
             return `${size.toFixed(1)} ${units[unitIndex]}`;
         }
 
-        // 创建进度条HTML
-        function createProgressBar(value, max, text, showPercent = true, type = 'memory') {
-            const percentage = (value / max * 100).toFixed(1);
-            let colorClass = 'low';
-            if (percentage > 80) {
-                colorClass = 'high';
-            } else if (percentage > 50) {
-                colorClass = 'medium';
+        // 更新CPU信息
+        function updateCpuInfo(cpu) {
+            document.getElementById('cpuCount').textContent = cpu.count;
+            document.getElementById('cpuFreq').textContent = cpu.freq.toFixed(0);
+        }
+
+        // 更新内存信息
+        function updateMemoryInfo(memory) {
+            document.getElementById('memoryTotal').textContent = formatMemory(memory.total);
+            document.getElementById('memoryUsed').textContent = formatMemory(memory.used);
+            document.getElementById('memoryAvailable').textContent = formatMemory(memory.available);
+        }
+
+        // 更新硬盘信息
+        function updateDiskInfo(disks) {
+            const tbody = document.getElementById('diskTableBody');
+            tbody.innerHTML = '';
+
+            if (!disks || disks.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7">未检测到磁盘</td></tr>';
+                return;
             }
 
-            // 如果是内存显示，使用formatMemory函数
-            if (type === 'memory') {
-                text = `${formatMemory(value)} / ${formatMemory(max)}`;
-                if (showPercent) {
-                    text += ` (${percentage}%)`;
+            disks.forEach(disk => {
+                const row = document.createElement('tr');
+                const percentage = disk.percent;
+                let colorClass = 'success';
+                if (percentage > 90) {
+                    colorClass = 'danger';
+                } else if (percentage > 70) {
+                    colorClass = 'warning';
                 }
-            } else {
-                text = `${value}% / ${max}%`;
-                if (showPercent) {
-                    text += ` (${percentage}%)`;
-                }
-            }
 
-            return `
-                <div class="progress-bar-container">
-                    <div class="progress-bar ${colorClass}" style="width: ${percentage}%"></div>
-                </div>
-                <span class="progress-text">${text}</span>
-            `;
+                row.innerHTML = `
+                    <td>${disk.mountpoint}</td>
+                    <td>${disk.device}</td>
+                    <td>${disk.fstype}</td>
+                    <td>${formatMemory(disk.total)}</td>
+                    <td>${formatMemory(disk.used)}</td>
+                    <td>${formatMemory(disk.free)}</td>
+                    <td>
+                        <div class="progress" style="height: 20px;">
+                            <div class="progress-bar bg-${colorClass}" 
+                                role="progressbar" 
+                                style="width: ${percentage}%;" 
+                                aria-valuenow="${percentage}" 
+                                aria-valuemin="0" 
+                                aria-valuemax="100">
+                                ${percentage}%
+                            </div>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
         }
 
         // 更新GPU信息
@@ -501,6 +542,37 @@
             });
         }
 
+        // 创建进度条HTML
+        function createProgressBar(value, max, text, showPercent = true, type = 'memory') {
+            const percentage = (value / max * 100).toFixed(1);
+            let colorClass = 'low';
+            if (percentage > 80) {
+                colorClass = 'high';
+            } else if (percentage > 50) {
+                colorClass = 'medium';
+            }
+
+            // 如果是内存显示，使用formatMemory函数
+            if (type === 'memory') {
+                text = `${formatMemory(value)} / ${formatMemory(max)}`;
+                if (showPercent) {
+                    text += ` (${percentage}%)`;
+                }
+            } else {
+                text = `${value}% / ${max}%`;
+                if (showPercent) {
+                    text += ` (${percentage}%)`;
+                }
+            }
+
+            return `
+                <div class="progress-bar-container">
+                    <div class="progress-bar ${colorClass}" style="width: ${percentage}%"></div>
+                </div>
+                <span class="progress-text">${text}</span>
+            `;
+        }
+
         // 获取系统信息并更新
         function updateSystemInfo() {
             fetch('/api/system-info')
@@ -508,251 +580,27 @@
                 .then(data => {
                     const timestamp = data.timestamp;
                     
-                    // 更新CPU图表
+                    // 更新CPU信息
                     updateChart(charts.cpu, timestamp, data.cpu.percent);
+                    updateCpuInfo(data.cpu);
                     
-                    // 更新内存图表
+                    // 更新内存信息
                     updateChart(charts.memory, timestamp, data.memory.percent);
+                    updateMemoryInfo(data.memory);
+                    
+                    // 更新硬盘信息
+                    updateDiskInfo(data.disks);
                     
                     // 更新GPU信息
                     updateGpuInfo(data.gpus);
-
-                    // 更新GPU选择下拉框，但保持当前选择
-                    updateGpuSelectOptions(data.gpus);
                 })
                 .catch(error => {
                     console.error('获取系统信息时出错:', error);
                 });
         }
 
-        // 更新GPU选择下拉框选项，但保持当前选择
-        function updateGpuSelectOptions(gpus) {
-            const select = document.getElementById('gpuSelect');
-            const currentValue = select.value;
-            const currentOptions = Array.from(select.options).map(opt => opt.value);
-            
-            // 只在GPU列表发生变化时更新选项
-            const newGpuIds = gpus.map(gpu => gpu.uuid);
-            if (JSON.stringify(currentOptions) === JSON.stringify(['', ...newGpuIds])) {
-                return; // GPU列表没有变化，不更新
-            }
-            
-            select.innerHTML = '<option value="">选择GPU</option>';
-            gpus.forEach(gpu => {
-                const option = document.createElement('option');
-                option.value = gpu.uuid;
-                option.textContent = `GPU ${gpu.id}`;
-                select.appendChild(option);
-            });
-            
-            // 恢复之前的选择
-            if (currentValue) {
-                select.value = currentValue;
-            }
-        }
-
-        // 获取未来7天的日期
-        function getNextSevenDays() {
-            const days = [];
-            const today = new Date();
-            
-            for (let i = 1; i <= 7; i++) {
-                const date = new Date(today);
-                date.setDate(today.getDate() + i);
-                days.push({
-                    date: date,
-                    dayStr: `${date.getMonth() + 1}月${date.getDate()}日`,
-                    fullStr: `${date.getMonth() + 1}月${date.getDate()}日 ${['日', '一', '二', '三', '四', '五', '六'][date.getDay()]}`
-                });
-            }
-            return days;
-        }
-
-        // 初始化预约表格
-        function initReservationTable() {
-            const tbody = document.querySelector('#reservationTable tbody');
-            const thead = document.querySelector('#reservationTable thead tr');
-            tbody.innerHTML = '';
-            
-            // 更新表头为未来7天的日期
-            const days = getNextSevenDays();
-            thead.innerHTML = '<th class="time-header corner">时间</th>';
-            days.forEach(day => {
-                thead.innerHTML += `<th>${day.fullStr}</th>`;
-            });
-
-            const selectedGpu = document.getElementById('gpuSelect').value;
-
-            for (let hour = 0; hour < 24; hour++) {
-                const tr = document.createElement('tr');
-                const timeStr = `${hour.toString().padStart(2, '0')}:00`;
-                
-                // 时间列
-                const th = document.createElement('th');
-                th.className = 'time-header';
-                th.textContent = timeStr;
-                tr.appendChild(th);
-                
-                // 每天的单元格
-                for (let day = 0; day < 7; day++) {
-                    const td = document.createElement('td');
-                    td.className = 'reservation-cell';
-                    td.dataset.hour = hour;
-                    td.dataset.day = days[day].date.toISOString().split('T')[0];
-                    td.dataset.id = `${td.dataset.day}-${hour}`;
-                    
-                    // 检查是否是已选择或已预约的时间段
-                    if (selectedGpu) {
-                        if (selectedCells.has(td.dataset.id)) {
-                            td.classList.add('selected');
-                        }
-                        if (reservations.get(selectedGpu)?.has(td.dataset.id)) {
-                            td.classList.add('reserved');
-                        }
-                    }
-                    
-                    td.addEventListener('click', () => toggleTimeSlot(td));
-                    // 添加鼠标悬停事件
-                    td.addEventListener('mouseenter', () => showReservationTooltip(td, true));
-                    td.addEventListener('mouseleave', () => showReservationTooltip(td, false));
-                    tr.appendChild(td);
-                }
-                
-                tbody.appendChild(tr);
-            }
-        }
-
-        // 切换时间槽的选择状态
-        function toggleTimeSlot(cell) {
-            const selectedGpu = document.getElementById('gpuSelect').value;
-            if (!selectedGpu) {
-                alert('请先选择GPU！');
-                return;
-            }
-
-            const timeSlotId = cell.dataset.id;
-            
-            // 处理已预约时段的选择
-            if (cell.classList.contains('reserved')) {
-                if (selectedForCancel.has(timeSlotId)) {
-                    selectedForCancel.delete(timeSlotId);
-                    cell.classList.remove('selected-for-cancel');
-                } else {
-                    selectedForCancel.add(timeSlotId);
-                    cell.classList.add('selected-for-cancel');
-                }
-                document.getElementById('cancelReservationBtn').disabled = selectedForCancel.size === 0;
-                return;
-            }
-            
-            // 处理新的预约选择
-            if (selectedCells.has(timeSlotId)) {
-                selectedCells.delete(timeSlotId);
-                cell.classList.remove('selected');
-            } else {
-                selectedCells.add(timeSlotId);
-                cell.classList.add('selected');
-            }
-            
-            document.getElementById('reserveBtn').disabled = selectedCells.size === 0;
-        }
-
-        // 显示预约信息提示
-        function showReservationTooltip(cell, show) {
-            const tooltip = document.getElementById('tooltip');
-            if (show && cell.classList.contains('reserved')) {
-                const rect = cell.getBoundingClientRect();
-                const selectedGpu = document.getElementById('gpuSelect').value;
-                const gpuOption = document.querySelector(`#gpuSelect option[value="${selectedGpu}"]`);
-                const gpuName = gpuOption ? gpuOption.textContent : selectedGpu;
-                
-                tooltip.textContent = `${gpuName} 已预约此时段（点击取消预约）`;
-                tooltip.style.display = 'block';
-                tooltip.style.left = rect.left + window.scrollX + 'px';
-                tooltip.style.top = rect.bottom + window.scrollY + 5 + 'px';
-            } else {
-                tooltip.style.display = 'none';
-            }
-        }
-
-        // 批量取消预约
-        function cancelSelectedReservations() {
-            const selectedGpu = document.getElementById('gpuSelect').value;
-            if (!selectedGpu || selectedForCancel.size === 0) return;
-
-            if (confirm(`确定要取消选中的 ${selectedForCancel.size} 个预约时段吗？`)) {
-                const gpuReservations = reservations.get(selectedGpu);
-                if (gpuReservations) {
-                    selectedForCancel.forEach(timeSlotId => {
-                        gpuReservations.delete(timeSlotId);
-                        const cell = document.querySelector(`.reservation-cell[data-id="${timeSlotId}"]`);
-                        if (cell) {
-                            cell.classList.remove('reserved', 'selected-for-cancel');
-                        }
-                    });
-                    selectedForCancel.clear();
-                    document.getElementById('cancelReservationBtn').disabled = true;
-                }
-            }
-        }
-
-        // GPU选择改变时更新预约表格显示
-        function onGpuSelectChange() {
-            selectedCells.clear();
-            selectedForCancel.clear();
-            document.getElementById('reserveBtn').disabled = true;
-            document.getElementById('cancelReservationBtn').disabled = true;
-            initReservationTable();
-        }
-
-        // 预约选中的时间槽
-        function reserveTimeSlots() {
-            const selectedGpu = document.getElementById('gpuSelect').value;
-            if (!selectedGpu || selectedCells.size === 0) return;
-            
-            if (!reservations.has(selectedGpu)) {
-                reservations.set(selectedGpu, new Set());
-            }
-            
-            const gpuReservations = reservations.get(selectedGpu);
-            selectedCells.forEach(timeSlotId => {
-                gpuReservations.add(timeSlotId);
-            });
-            
-            // 更新预约表格显示
-            document.querySelectorAll('.reservation-cell').forEach(cell => {
-                if (selectedCells.has(cell.dataset.id)) {
-                    cell.classList.remove('selected');
-                    cell.classList.add('reserved');
-                }
-            });
-            
-            selectedCells.clear();
-            document.getElementById('reserveBtn').disabled = true;
-        }
-
-        // 在页面加载完成后初始化预约功能
+        // 在页面加载完成后初始化
         document.addEventListener('DOMContentLoaded', () => {
-            initReservationTable();
-            
-            // 添加GPU选择改变事件监听
-            document.getElementById('gpuSelect').addEventListener('change', onGpuSelectChange);
-            
-            document.getElementById('clearSelectionBtn').addEventListener('click', () => {
-                selectedCells.clear();
-                selectedForCancel.clear(); // 清除待取消的选择
-                document.querySelectorAll('.reservation-cell.selected, .reservation-cell.selected-for-cancel').forEach(cell => {
-                    cell.classList.remove('selected', 'selected-for-cancel');
-                });
-                document.getElementById('reserveBtn').disabled = true;
-                document.getElementById('cancelReservationBtn').disabled = true;
-            });
-            
-            document.getElementById('reserveBtn').addEventListener('click', reserveTimeSlots);
-            
-            // 添加取消预约按钮的点击事件监听器
-            document.getElementById('cancelReservationBtn').addEventListener('click', cancelSelectedReservations);
-
             // 立即执行一次更新
             updateSystemInfo();
             // 设置定时更新
