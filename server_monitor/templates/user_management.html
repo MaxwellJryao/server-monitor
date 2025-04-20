@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>用户管理</h2>
+    
+    <!-- 添加用户按钮 -->
+    <button type="button" class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#addUserModal">
+        添加用户
+    </button>
+    
+    <!-- 用户列表 -->
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>用户名</th>
+                    <th>邮箱</th>
+                    <th>管理员</th>
+                    <th>邮箱验证</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user.id }}</td>
+                    <td>{{ user.username }}</td>
+                    <td>{{ user.email }}</td>
+                    <td>
+                        <span class="badge {% if user.is_admin %}bg-success{% else %}bg-secondary{% endif %}">
+                            {{ "是" if user.is_admin else "否" }}
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge {% if user.email_verified %}bg-success{% else %}bg-warning{% endif %}">
+                            {{ "已验证" if user.email_verified else "未验证" }}
+                        </span>
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-primary edit-user" data-user-id="{{ user.id }}">编辑</button>
+                        <button class="btn btn-sm btn-danger delete-user" data-user-id="{{ user.id }}">删除</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 添加用户模态框 -->
+<div class="modal fade" id="addUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">添加用户</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addUserForm">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">用户名</label>
+                        <input type="text" class="form-control" id="username" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">邮箱</label>
+                        <input type="email" class="form-control" id="email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">密码</label>
+                        <input type="password" class="form-control" id="password" required>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="is_admin">
+                        <label class="form-check-label" for="is_admin">管理员权限</label>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="email_verified">
+                        <label class="form-check-label" for="email_verified">邮箱已验证</label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="submitAddUser">添加</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑用户模态框 -->
+<div class="modal fade" id="editUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">编辑用户</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editUserForm">
+                    <input type="hidden" id="edit_user_id">
+                    <div class="mb-3">
+                        <label for="edit_username" class="form-label">用户名</label>
+                        <input type="text" class="form-control" id="edit_username" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_email" class="form-label">邮箱</label>
+                        <input type="email" class="form-control" id="edit_email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="edit_password" class="form-label">新密码（留空则不修改）</label>
+                        <input type="password" class="form-control" id="edit_password">
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="edit_is_admin">
+                        <label class="form-check-label" for="edit_is_admin">管理员权限</label>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="edit_email_verified">
+                        <label class="form-check-label" for="edit_email_verified">邮箱已验证</label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="submitEditUser">保存</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // 添加用户
+    document.getElementById('submitAddUser').addEventListener('click', function() {
+        const data = {
+            username: document.getElementById('username').value,
+            email: document.getElementById('email').value,
+            password: document.getElementById('password').value,
+            is_admin: document.getElementById('is_admin').checked,
+            email_verified: document.getElementById('email_verified').checked
+        };
+        
+        fetch('/user/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert(data.message);
+            }
+        });
+    });
+    
+    // 编辑用户
+    document.querySelectorAll('.edit-user').forEach(button => {
+        button.addEventListener('click', function() {
+            const userId = this.dataset.userId;
+            const row = this.closest('tr');
+            
+            document.getElementById('edit_user_id').value = userId;
+            document.getElementById('edit_username').value = row.cells[1].textContent;
+            document.getElementById('edit_email').value = row.cells[2].textContent;
+            document.getElementById('edit_is_admin').checked = row.cells[3].textContent.trim() === '是';
+            document.getElementById('edit_email_verified').checked = row.cells[4].textContent.trim() === '已验证';
+            
+            new bootstrap.Modal(document.getElementById('editUserModal')).show();
+        });
+    });
+    
+    // 提交编辑
+    document.getElementById('submitEditUser').addEventListener('click', function() {
+        const userId = document.getElementById('edit_user_id').value;
+        const data = {
+            username: document.getElementById('edit_username').value,
+            email: document.getElementById('edit_email').value,
+            password: document.getElementById('edit_password').value,
+            is_admin: document.getElementById('edit_is_admin').checked,
+            email_verified: document.getElementById('edit_email_verified').checked
+        };
+        
+        fetch(`/user/edit/${userId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert(data.message);
+            }
+        });
+    });
+    
+    // 删除用户
+    document.querySelectorAll('.delete-user').forEach(button => {
+        button.addEventListener('click', function() {
+            if (confirm('确定要删除此用户吗？')) {
+                const userId = this.dataset.userId;
+                
+                fetch(`/user/delete/${userId}`, {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        alert(data.message);
+                    }
+                });
+            }
+        });
+    });
+});
+</script>
+{% endblock %} 
