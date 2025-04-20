@@ -150,7 +150,14 @@
         .reservation-cell.reserved {
             background-color: #ff5252;
             color: white;
-            cursor: not-allowed;
+            cursor: pointer;
+        }
+        .reservation-cell.reserved:hover {
+            background-color: #ff1744;
+        }
+        .reservation-cell.reserved.selected-for-cancel {
+            background-color: #d32f2f;
+            outline: 2px solid #ffeb3b;
         }
         .reservation-controls {
             margin: 20px 0;
@@ -162,6 +169,7 @@
             display: flex;
             gap: 20px;
             margin: 10px 0;
+            flex-wrap: wrap;
         }
         .legend-item {
             display: flex;
@@ -172,6 +180,28 @@
             width: 20px;
             height: 20px;
             border: 1px solid #ddd;
+        }
+        .reservation-table th {
+            text-align: center;
+            padding: 8px;
+            font-size: 0.9em;
+        }
+        .time-header {
+            min-width: 60px;
+        }
+        .reservation-table th:not(.time-header) {
+            min-width: 100px;
+        }
+        .tooltip {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
         }
     </style>
 </head>
@@ -236,6 +266,7 @@
                             </select>
                             <button id="reserveBtn" class="btn btn-primary" disabled>预约所选时段</button>
                             <button id="clearSelectionBtn" class="btn btn-secondary">清除选择</button>
+                            <button id="cancelReservationBtn" class="btn btn-danger" disabled>取消选中的预约</button>
                         </div>
                         <div class="reservation-legend">
                             <div class="legend-item">
@@ -250,19 +281,16 @@
                                 <div class="legend-color" style="background-color: #ff5252;"></div>
                                 <span>已预约</span>
                             </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background-color: #d32f2f; outline: 2px solid #ffeb3b;"></div>
+                                <span>选中待取消</span>
+                            </div>
                         </div>
+                        <div id="tooltip" class="tooltip"></div>
                         <div class="reservation-container">
                             <table class="reservation-table" id="reservationTable">
                                 <thead>
                                     <tr>
-                                        <th class="time-header corner">时间</th>
-                                        <th>周一</th>
-                                        <th>周二</th>
-                                        <th>周三</th>
-                                        <th>周四</th>
-                                        <th>周五</th>
-                                        <th>周六</th>
-                                        <th>周日</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -286,6 +314,9 @@
             cpu: { labels: [], values: [] },
             memory: { labels: [], values: [] }
         };
+
+        // 添加用于存储待取消预约的集合
+        let selectedForCancel = new Set();
 
         // 创建图表
         function createChart(canvasId, label, color) {
@@ -451,7 +482,7 @@
                 tbody.appendChild(detailsRow);
 
                 // 双击事件处理
-                row.addEventListener('dblclick', (e) => {
+                row.addEventListener('click', (e) => {
                     e.preventDefault();
                     const details = row.nextElementSibling;
                     
@@ -483,27 +514,74 @@
                     // 更新内存图表
                     updateChart(charts.memory, timestamp, data.memory.percent);
                     
-                    // 调试输出
-                    console.log('收到的GPU数据:', data.gpus);
-                    console.log('GPU数量:', data.gpus.length);
-                    
                     // 更新GPU信息
                     updateGpuInfo(data.gpus);
+
+                    // 更新GPU选择下拉框，但保持当前选择
+                    updateGpuSelectOptions(data.gpus);
                 })
                 .catch(error => {
                     console.error('获取系统信息时出错:', error);
                 });
         }
 
-        // 定期更新数据
-        setInterval(updateSystemInfo, 2000);
-        updateSystemInfo(); // 立即执行一次
+        // 更新GPU选择下拉框选项，但保持当前选择
+        function updateGpuSelectOptions(gpus) {
+            const select = document.getElementById('gpuSelect');
+            const currentValue = select.value;
+            const currentOptions = Array.from(select.options).map(opt => opt.value);
+            
+            // 只在GPU列表发生变化时更新选项
+            const newGpuIds = gpus.map(gpu => gpu.uuid);
+            if (JSON.stringify(currentOptions) === JSON.stringify(['', ...newGpuIds])) {
+                return; // GPU列表没有变化，不更新
+            }
+            
+            select.innerHTML = '<option value="">选择GPU</option>';
+            gpus.forEach(gpu => {
+                const option = document.createElement('option');
+                option.value = gpu.uuid;
+                option.textContent = `GPU ${gpu.id}`;
+                select.appendChild(option);
+            });
+            
+            // 恢复之前的选择
+            if (currentValue) {
+                select.value = currentValue;
+            }
+        }
 
-        // GPU预约相关代码
+        // 获取未来7天的日期
+        function getNextSevenDays() {
+            const days = [];
+            const today = new Date();
+            
+            for (let i = 1; i <= 7; i++) {
+                const date = new Date(today);
+                date.setDate(today.getDate() + i);
+                days.push({
+                    date: date,
+                    dayStr: `${date.getMonth() + 1}月${date.getDate()}日`,
+                    fullStr: `${date.getMonth() + 1}月${date.getDate()}日 ${['日', '一', '二', '三', '四', '五', '六'][date.getDay()]}`
+                });
+            }
+            return days;
+        }
+
         // 初始化预约表格
         function initReservationTable() {
             const tbody = document.querySelector('#reservationTable tbody');
+            const thead = document.querySelector('#reservationTable thead tr');
             tbody.innerHTML = '';
+            
+            // 更新表头为未来7天的日期
+            const days = getNextSevenDays();
+            thead.innerHTML = '<th class="time-header corner">时间</th>';
+            days.forEach(day => {
+                thead.innerHTML += `<th>${day.fullStr}</th>`;
+            });
+
+            const selectedGpu = document.getElementById('gpuSelect').value;
 
             for (let hour = 0; hour < 24; hour++) {
                 const tr = document.createElement('tr');
@@ -520,40 +598,28 @@
                     const td = document.createElement('td');
                     td.className = 'reservation-cell';
                     td.dataset.hour = hour;
-                    td.dataset.day = day;
-                    td.dataset.id = `${day}-${hour}`;
+                    td.dataset.day = days[day].date.toISOString().split('T')[0];
+                    td.dataset.id = `${td.dataset.day}-${hour}`;
+                    
+                    // 检查是否是已选择或已预约的时间段
+                    if (selectedGpu) {
+                        if (selectedCells.has(td.dataset.id)) {
+                            td.classList.add('selected');
+                        }
+                        if (reservations.get(selectedGpu)?.has(td.dataset.id)) {
+                            td.classList.add('reserved');
+                        }
+                    }
                     
                     td.addEventListener('click', () => toggleTimeSlot(td));
+                    // 添加鼠标悬停事件
+                    td.addEventListener('mouseenter', () => showReservationTooltip(td, true));
+                    td.addEventListener('mouseleave', () => showReservationTooltip(td, false));
                     tr.appendChild(td);
                 }
                 
                 tbody.appendChild(tr);
             }
-        }
-
-        // 更新GPU选择下拉框
-        function updateGpuSelect(gpus) {
-            const select = document.getElementById('gpuSelect');
-            const currentValue = select.value;
-            
-            // 保存当前选项
-            select.innerHTML = '<option value="">选择GPU</option>';
-            
-            gpus.forEach(gpu => {
-                const option = document.createElement('option');
-                option.value = gpu.uuid;  // 使用UUID作为value
-                // 显示简短的UUID（前8位）和GPU名称
-                // const shortUuid = gpu.uuid.split('-')[0];
-                option.textContent = `GPU ${gpu.id}`;
-                select.appendChild(option);
-            });
-            
-            // 恢复之前的选择
-            if (currentValue) {
-                select.value = currentValue;
-            }
-            
-            updateReservationTable();
         }
 
         // 切换时间槽的选择状态
@@ -566,11 +632,20 @@
 
             const timeSlotId = cell.dataset.id;
             
-            // 检查是否已被预约
+            // 处理已预约时段的选择
             if (cell.classList.contains('reserved')) {
+                if (selectedForCancel.has(timeSlotId)) {
+                    selectedForCancel.delete(timeSlotId);
+                    cell.classList.remove('selected-for-cancel');
+                } else {
+                    selectedForCancel.add(timeSlotId);
+                    cell.classList.add('selected-for-cancel');
+                }
+                document.getElementById('cancelReservationBtn').disabled = selectedForCancel.size === 0;
                 return;
             }
             
+            // 处理新的预约选择
             if (selectedCells.has(timeSlotId)) {
                 selectedCells.delete(timeSlotId);
                 cell.classList.remove('selected');
@@ -582,31 +657,52 @@
             document.getElementById('reserveBtn').disabled = selectedCells.size === 0;
         }
 
-        // 清除所有选择
-        function clearSelection() {
-            selectedCells.clear();
-            document.querySelectorAll('.reservation-cell.selected').forEach(cell => {
-                cell.classList.remove('selected');
-            });
-            document.getElementById('reserveBtn').disabled = true;
+        // 显示预约信息提示
+        function showReservationTooltip(cell, show) {
+            const tooltip = document.getElementById('tooltip');
+            if (show && cell.classList.contains('reserved')) {
+                const rect = cell.getBoundingClientRect();
+                const selectedGpu = document.getElementById('gpuSelect').value;
+                const gpuOption = document.querySelector(`#gpuSelect option[value="${selectedGpu}"]`);
+                const gpuName = gpuOption ? gpuOption.textContent : selectedGpu;
+                
+                tooltip.textContent = `${gpuName} 已预约此时段（点击取消预约）`;
+                tooltip.style.display = 'block';
+                tooltip.style.left = rect.left + window.scrollX + 'px';
+                tooltip.style.top = rect.bottom + window.scrollY + 5 + 'px';
+            } else {
+                tooltip.style.display = 'none';
+            }
         }
 
-        // 更新预约表格显示
-        function updateReservationTable() {
+        // 批量取消预约
+        function cancelSelectedReservations() {
             const selectedGpu = document.getElementById('gpuSelect').value;
-            const reservedSlots = reservations.get(selectedGpu) || new Set();
-            
-            document.querySelectorAll('.reservation-cell').forEach(cell => {
-                cell.classList.remove('reserved');
-                cell.classList.remove('selected');
-                
-                if (reservedSlots.has(cell.dataset.id)) {
-                    cell.classList.add('reserved');
+            if (!selectedGpu || selectedForCancel.size === 0) return;
+
+            if (confirm(`确定要取消选中的 ${selectedForCancel.size} 个预约时段吗？`)) {
+                const gpuReservations = reservations.get(selectedGpu);
+                if (gpuReservations) {
+                    selectedForCancel.forEach(timeSlotId => {
+                        gpuReservations.delete(timeSlotId);
+                        const cell = document.querySelector(`.reservation-cell[data-id="${timeSlotId}"]`);
+                        if (cell) {
+                            cell.classList.remove('reserved', 'selected-for-cancel');
+                        }
+                    });
+                    selectedForCancel.clear();
+                    document.getElementById('cancelReservationBtn').disabled = true;
                 }
-            });
-            
+            }
+        }
+
+        // GPU选择改变时更新预约表格显示
+        function onGpuSelectChange() {
             selectedCells.clear();
+            selectedForCancel.clear();
             document.getElementById('reserveBtn').disabled = true;
+            document.getElementById('cancelReservationBtn').disabled = true;
+            initReservationTable();
         }
 
         // 预约选中的时间槽
@@ -623,28 +719,45 @@
                 gpuReservations.add(timeSlotId);
             });
             
-            clearSelection();
-            updateReservationTable();
-        }
-
-        // 初始化预约功能
-        function initReservation() {
-            initReservationTable();
+            // 更新预约表格显示
+            document.querySelectorAll('.reservation-cell').forEach(cell => {
+                if (selectedCells.has(cell.dataset.id)) {
+                    cell.classList.remove('selected');
+                    cell.classList.add('reserved');
+                }
+            });
             
-            document.getElementById('gpuSelect').addEventListener('change', updateReservationTable);
-            document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
-            document.getElementById('reserveBtn').addEventListener('click', reserveTimeSlots);
+            selectedCells.clear();
+            document.getElementById('reserveBtn').disabled = true;
         }
 
         // 在页面加载完成后初始化预约功能
-        document.addEventListener('DOMContentLoaded', initReservation);
+        document.addEventListener('DOMContentLoaded', () => {
+            initReservationTable();
+            
+            // 添加GPU选择改变事件监听
+            document.getElementById('gpuSelect').addEventListener('change', onGpuSelectChange);
+            
+            document.getElementById('clearSelectionBtn').addEventListener('click', () => {
+                selectedCells.clear();
+                selectedForCancel.clear(); // 清除待取消的选择
+                document.querySelectorAll('.reservation-cell.selected, .reservation-cell.selected-for-cancel').forEach(cell => {
+                    cell.classList.remove('selected', 'selected-for-cancel');
+                });
+                document.getElementById('reserveBtn').disabled = true;
+                document.getElementById('cancelReservationBtn').disabled = true;
+            });
+            
+            document.getElementById('reserveBtn').addEventListener('click', reserveTimeSlots);
+            
+            // 添加取消预约按钮的点击事件监听器
+            document.getElementById('cancelReservationBtn').addEventListener('click', cancelSelectedReservations);
 
-        // 在更新GPU信息时同时更新GPU选择下拉框
-        const originalUpdateGpuInfo = updateGpuInfo;
-        updateGpuInfo = function(gpus) {
-            originalUpdateGpuInfo(gpus);
-            updateGpuSelect(gpus);
-        };
+            // 立即执行一次更新
+            updateSystemInfo();
+            // 设置定时更新
+            setInterval(updateSystemInfo, 2000);
+        });
     </script>
 </body>
 </html> 
