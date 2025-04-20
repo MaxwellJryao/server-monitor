@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>服务器监控系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-bottom: 20px;
+        }
+        .card {
+            margin-bottom: 20px;
+        }
+        .gpu-info {
+            margin-top: 10px;
+            font-size: 0.9rem;
+        }
+        .gpu-table {
+            width: 100%;
+            font-family: monospace;
+            font-size: 0.9rem;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin-bottom: 0;
+        }
+        .gpu-table th, .gpu-table td {
+            padding: 4px 8px;
+            border-bottom: 1px solid #444;
+            white-space: nowrap;
+        }
+        .gpu-row {
+            cursor: pointer;
+        }
+        .gpu-row:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        .gpu-details {
+            display: none;
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+        .gpu-details.show {
+            display: table-row !important;
+        }
+        .gpu-details td {
+            padding: 12px !important;
+        }
+        .progress-bar-container {
+            display: inline-block;
+            width: 150px;
+            height: 15px;
+            background-color: #2a2a2a;
+            margin: 0 5px;
+            vertical-align: middle;
+        }
+        .progress-bar {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+        .progress-bar.low {
+            background-color: #4CAF50;
+        }
+        .progress-bar.medium {
+            background-color: #FFA726;
+        }
+        .progress-bar.high {
+            background-color: #EF5350;
+        }
+        .progress-text {
+            display: inline-block;
+            min-width: 120px;
+        }
+        .gpu-header {
+            font-weight: bold;
+            color: #aaa;
+            background-color: #2a2a2a;
+        }
+        .gpu-process-table {
+            width: 100%;
+            margin-top: 8px;
+            font-size: 0.85rem;
+        }
+        .gpu-process-table th {
+            text-align: left;
+            color: #aaa;
+            padding: 4px 8px;
+            border-bottom: 1px solid #444;
+        }
+        .gpu-process-table td {
+            padding: 4px 8px;
+            border: none !important;
+        }
+        .gpu-name {
+            color: #64B5F6;
+            font-weight: bold;
+        }
+        .gpu-stat {
+            display: inline-block;
+            margin-right: 15px;
+        }
+        .table-responsive {
+            overflow-x: auto;
+        }
+        /* GPU预约表格样式 */
+        .reservation-container {
+            margin-top: 20px;
+            overflow-x: auto;
+        }
+        .reservation-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+        .reservation-table th,
+        .reservation-table td {
+            border: 1px solid #ddd;
+            padding: 4px;
+            text-align: center;
+            min-width: 40px;
+        }
+        .reservation-table th {
+            background-color: #f5f5f5;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        .reservation-table th.time-header {
+            position: sticky;
+            left: 0;
+            background-color: #f5f5f5;
+            z-index: 2;
+        }
+        .reservation-table th.time-header.corner {
+            z-index: 3;
+        }
+        .reservation-cell {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .reservation-cell:hover {
+            background-color: #e3f2fd;
+        }
+        .reservation-cell.selected {
+            background-color: #2196f3;
+            color: white;
+        }
+        .reservation-cell.reserved {
+            background-color: #ff5252;
+            color: white;
+            cursor: not-allowed;
+        }
+        .reservation-controls {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .reservation-legend {
+            display: flex;
+            gap: 20px;
+            margin: 10px 0;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid py-4">
+        <h1 class="text-center mb-4">服务器硬件监控系统</h1>
+        <div class="row">
+            <!-- CPU使用率 -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">CPU使用率</h5>
+                        <div class="chart-container">
+                            <canvas id="cpuChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- 内存使用率 -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">内存使用率</h5>
+                        <div class="chart-container">
+                            <canvas id="memoryChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- GPU监控 -->
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">GPU监控</h5>
+                        <div class="table-responsive">
+                            <table class="gpu-table">
+                                <thead>
+                                    <tr class="gpu-header">
+                                        <th>ID</th>
+                                        <th>风扇</th>
+                                        <th>温度</th>
+                                        <th>功率</th>
+                                        <th>内存使用</th>
+                                        <th>GPU使用率</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="gpuTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- GPU预约 -->
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">GPU预约</h5>
+                        <div class="reservation-controls">
+                            <select id="gpuSelect" class="form-select" style="width: auto;">
+                                <option value="">选择GPU</option>
+                            </select>
+                            <button id="reserveBtn" class="btn btn-primary" disabled>预约所选时段</button>
+                            <button id="clearSelectionBtn" class="btn btn-secondary">清除选择</button>
+                        </div>
+                        <div class="reservation-legend">
+                            <div class="legend-item">
+                                <div class="legend-color" style="background-color: #e3f2fd;"></div>
+                                <span>可选择</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background-color: #2196f3;"></div>
+                                <span>已选择</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background-color: #ff5252;"></div>
+                                <span>已预约</span>
+                            </div>
+                        </div>
+                        <div class="reservation-container">
+                            <table class="reservation-table" id="reservationTable">
+                                <thead>
+                                    <tr>
+                                        <th class="time-header corner">时间</th>
+                                        <th>周一</th>
+                                        <th>周二</th>
+                                        <th>周三</th>
+                                        <th>周四</th>
+                                        <th>周五</th>
+                                        <th>周六</th>
+                                        <th>周日</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 图表配置和数据存储
+        const maxDataPoints = 20;
+        const charts = {};
+        const data = {
+            cpu: { labels: [], values: [] },
+            memory: { labels: [], values: [] }
+        };
+
+        // 创建图表
+        function createChart(canvasId, label, color) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            return new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: label,
+                        data: [],
+                        borderColor: color,
+                        tension: 0.4,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+
+        // 初始化图表
+        charts.cpu = createChart('cpuChart', 'CPU使用率 (%)', 'rgb(75, 192, 192)');
+        charts.memory = createChart('memoryChart', '内存使用率 (%)', 'rgb(255, 99, 132)');
+
+        // 更新图表数据
+        function updateChart(chart, newLabel, newValue) {
+            chart.data.labels.push(newLabel);
+            chart.data.datasets[0].data.push(newValue);
+
+            if (chart.data.labels.length > maxDataPoints) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+            }
+
+            chart.update();
+        }
+
+        // 格式化内存大小，自动选择合适的单位
+        function formatMemory(bytes) {
+            const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+            let size = bytes;
+            let unitIndex = 0;
+            
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex++;
+            }
+            
+            return `${size.toFixed(1)} ${units[unitIndex]}`;
+        }
+
+        // 创建进度条HTML
+        function createProgressBar(value, max, text, showPercent = true, type = 'memory') {
+            const percentage = (value / max * 100).toFixed(1);
+            let colorClass = 'low';
+            if (percentage > 80) {
+                colorClass = 'high';
+            } else if (percentage > 50) {
+                colorClass = 'medium';
+            }
+
+            // 如果是内存显示，使用formatMemory函数
+            if (type === 'memory') {
+                text = `${formatMemory(value)} / ${formatMemory(max)}`;
+                if (showPercent) {
+                    text += ` (${percentage}%)`;
+                }
+            } else {
+                text = `${value}% / ${max}%`;
+                if (showPercent) {
+                    text += ` (${percentage}%)`;
+                }
+            }
+
+            return `
+                <div class="progress-bar-container">
+                    <div class="progress-bar ${colorClass}" style="width: ${percentage}%"></div>
+                </div>
+                <span class="progress-text">${text}</span>
+            `;
+        }
+
+        // 更新GPU信息
+        function updateGpuInfo(gpus) {
+            const tbody = document.getElementById('gpuTableBody');
+            // 保存当前展开的GPU行的ID
+            const expandedGpuIds = Array.from(document.querySelectorAll('.gpu-details.show'))
+                .map(row => row.previousElementSibling.querySelector('td').textContent);
+            
+            tbody.innerHTML = '';
+
+            if (!gpus || gpus.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6">未检测到GPU</td></tr>';
+                return;
+            }
+
+            gpus.forEach((gpu, index) => {
+                const row = document.createElement('tr');
+                row.className = 'gpu-row';
+                row.innerHTML = `
+                    <td>${gpu.id}</td>
+                    <td>${gpu.fan_speed}%</td>
+                    <td>${gpu.temperature}°C</td>
+                    <td>${gpu.power_usage.toFixed(0)}W / ${gpu.power_limit.toFixed(0)}W</td>
+                    <td>${createProgressBar(gpu.memoryUsed, gpu.memoryTotal, 
+                        `${formatMemory(gpu.memoryUsed)} / ${formatMemory(gpu.memoryTotal)}`, true, 'memory')}</td>
+                    <td>${createProgressBar(gpu.load, 100, `${gpu.load}%`, false, 'load')}</td>
+                `;
+
+                const detailsRow = document.createElement('tr');
+                detailsRow.className = 'gpu-details';
+                // 如果这个GPU之前是展开的，保持展开状态
+                if (expandedGpuIds.includes(gpu.id.toString())) {
+                    detailsRow.classList.add('show');
+                }
+                
+                let processesHtml = '';
+                if (gpu.processes && gpu.processes.length > 0) {
+                    processesHtml = gpu.processes.map(proc => `
+                        <tr>
+                            <td>${proc.pid}</td>
+                            <td>${proc.username}</td>
+                            <td>${formatMemory(proc.gpu_memory)}</td>
+                            <td style="white-space: normal;">${proc.command}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    processesHtml = '<tr><td colspan="4">暂无进程信息</td></tr>';
+                }
+
+                detailsRow.innerHTML = `
+                    <td colspan="6">
+                        <div class="gpu-name">${gpu.name}</div>
+                        <div class="mt-2">
+                            <span class="gpu-stat">温度: ${gpu.temperature}°C</span>
+                            <span class="gpu-stat">功率: ${gpu.power_usage.toFixed(1)}W / ${gpu.power_limit.toFixed(1)}W</span>
+                            <span class="gpu-stat">风扇: ${gpu.fan_speed}%</span>
+                            <span class="gpu-stat">内存: ${formatMemory(gpu.memoryUsed)} / ${formatMemory(gpu.memoryTotal)}</span>
+                        </div>
+                        <table class="gpu-process-table">
+                            <thead>
+                                <tr>
+                                    <th>进程ID</th>
+                                    <th>用户</th>
+                                    <th>GPU内存</th>
+                                    <th>命令</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${processesHtml}
+                            </tbody>
+                        </table>
+                    </td>
+                `;
+
+                tbody.appendChild(row);
+                tbody.appendChild(detailsRow);
+
+                // 双击事件处理
+                row.addEventListener('dblclick', (e) => {
+                    e.preventDefault();
+                    // 获取当前行的详情元素
+                    const details = row.nextElementSibling;
+                    
+                    // 如果当前详情已经显示，则只隐藏当前详情
+                    if (details.classList.contains('show')) {
+                        details.classList.remove('show');
+                        return;
+                    }
+                    
+                    // 隐藏所有其他GPU的详情
+                    document.querySelectorAll('.gpu-details').forEach(detail => {
+                        detail.classList.remove('show');
+                    });
+                    
+                    // 显示当前GPU的详情
+                    details.classList.add('show');
+                });
+
+                // 添加鼠标悬停提示
+                row.title = '双击查看详细信息';
+            });
+        }
+
+        // 获取系统信息并更新
+        function updateSystemInfo() {
+            fetch('/api/system-info')
+                .then(response => response.json())
+                .then(data => {
+                    const timestamp = data.timestamp;
+                    
+                    // 更新CPU图表
+                    updateChart(charts.cpu, timestamp, data.cpu.percent);
+                    
+                    // 更新内存图表
+                    updateChart(charts.memory, timestamp, data.memory.percent);
+                    
+                    // 调试输出
+                    console.log('收到的GPU数据:', data.gpus);
+                    console.log('GPU数量:', data.gpus.length);
+                    
+                    // 更新GPU信息
+                    updateGpuInfo(data.gpus);
+                })
+                .catch(error => {
+                    console.error('获取系统信息时出错:', error);
+                });
+        }
+
+        // 定期更新数据
+        setInterval(updateSystemInfo, 2000);
+        updateSystemInfo(); // 立即执行一次
+
+        // GPU预约相关代码
+        let selectedCells = new Set();
+        let reservations = new Map(); // 存储预约信息：Map<gpuId, Set<timeSlotId>>
+
+        // 初始化预约表格
+        function initReservationTable() {
+            const tbody = document.querySelector('#reservationTable tbody');
+            tbody.innerHTML = '';
+
+            for (let hour = 0; hour < 24; hour++) {
+                const tr = document.createElement('tr');
+                const timeStr = `${hour.toString().padStart(2, '0')}:00`;
+                
+                // 时间列
+                const th = document.createElement('th');
+                th.className = 'time-header';
+                th.textContent = timeStr;
+                tr.appendChild(th);
+                
+                // 每天的单元格
+                for (let day = 0; day < 7; day++) {
+                    const td = document.createElement('td');
+                    td.className = 'reservation-cell';
+                    td.dataset.hour = hour;
+                    td.dataset.day = day;
+                    td.dataset.id = `${day}-${hour}`;
+                    
+                    td.addEventListener('click', () => toggleTimeSlot(td));
+                    tr.appendChild(td);
+                }
+                
+                tbody.appendChild(tr);
+            }
+        }
+
+        // 更新GPU选择下拉框
+        function updateGpuSelect(gpus) {
+            const select = document.getElementById('gpuSelect');
+            const currentValue = select.value;
+            
+            // 保存当前选项
+            select.innerHTML = '<option value="">选择GPU</option>';
+            
+            gpus.forEach(gpu => {
+                const option = document.createElement('option');
+                option.value = gpu.id;
+                option.textContent = `GPU ${gpu.id}: ${gpu.name}`;
+                select.appendChild(option);
+            });
+            
+            // 恢复之前的选择
+            if (currentValue) {
+                select.value = currentValue;
+            }
+            
+            updateReservationTable();
+        }
+
+        // 切换时间槽的选择状态
+        function toggleTimeSlot(cell) {
+            const selectedGpu = document.getElementById('gpuSelect').value;
+            if (!selectedGpu) {
+                alert('请先选择GPU！');
+                return;
+            }
+
+            const timeSlotId = cell.dataset.id;
+            
+            // 检查是否已被预约
+            if (cell.classList.contains('reserved')) {
+                return;
+            }
+            
+            if (selectedCells.has(timeSlotId)) {
+                selectedCells.delete(timeSlotId);
+                cell.classList.remove('selected');
+            } else {
+                selectedCells.add(timeSlotId);
+                cell.classList.add('selected');
+            }
+            
+            document.getElementById('reserveBtn').disabled = selectedCells.size === 0;
+        }
+
+        // 清除所有选择
+        function clearSelection() {
+            selectedCells.clear();
+            document.querySelectorAll('.reservation-cell.selected').forEach(cell => {
+                cell.classList.remove('selected');
+            });
+            document.getElementById('reserveBtn').disabled = true;
+        }
+
+        // 更新预约表格显示
+        function updateReservationTable() {
+            const selectedGpu = document.getElementById('gpuSelect').value;
+            const reservedSlots = reservations.get(selectedGpu) || new Set();
+            
+            document.querySelectorAll('.reservation-cell').forEach(cell => {
+                cell.classList.remove('reserved');
+                cell.classList.remove('selected');
+                
+                if (reservedSlots.has(cell.dataset.id)) {
+                    cell.classList.add('reserved');
+                }
+            });
+            
+            selectedCells.clear();
+            document.getElementById('reserveBtn').disabled = true;
+        }
+
+        // 预约选中的时间槽
+        function reserveTimeSlots() {
+            const selectedGpu = document.getElementById('gpuSelect').value;
+            if (!selectedGpu || selectedCells.size === 0) return;
+            
+            if (!reservations.has(selectedGpu)) {
+                reservations.set(selectedGpu, new Set());
+            }
+            
+            const gpuReservations = reservations.get(selectedGpu);
+            selectedCells.forEach(timeSlotId => {
+                gpuReservations.add(timeSlotId);
+            });
+            
+            clearSelection();
+            updateReservationTable();
+        }
+
+        // 初始化预约功能
+        function initReservation() {
+            initReservationTable();
+            
+            document.getElementById('gpuSelect').addEventListener('change', updateReservationTable);
+            document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
+            document.getElementById('reserveBtn').addEventListener('click', reserveTimeSlots);
+        }
+
+        // 在页面加载完成后初始化预约功能
+        document.addEventListener('DOMContentLoaded', initReservation);
+
+        // 在更新GPU信息时同时更新GPU选择下拉框
+        const originalUpdateGpuInfo = updateGpuInfo;
+        updateGpuInfo = function(gpus) {
+            originalUpdateGpuInfo(gpus);
+            updateGpuSelect(gpus);
+        };
+    </script>
+</body>
+</html> 
